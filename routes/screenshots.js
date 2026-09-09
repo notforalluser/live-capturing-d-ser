@@ -54,4 +54,32 @@ router.get('/:deviceId', async (req, res) => {
   }
 });
 
+// DELETE /api/screenshots/:id -> delete one screenshot by its document ID
+router.delete('/:id', async (req, res) => {
+  try {
+    const deleted = await Screenshot.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Delete error:', err);
+    res.status(500).json({ error: 'Failed to delete' });
+  }
+});
+
+// POST /api/screenshots/delete-many  { ids: [...] } -> bulk delete for the
+// dashboard's "Delete Selected" button
+router.post('/delete-many', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+    const result = await Screenshot.deleteMany({ _id: { $in: ids } });
+    res.json({ ok: true, deletedCount: result.deletedCount });
+  } catch (err) {
+    console.error('Bulk delete error:', err);
+    res.status(500).json({ error: 'Failed to delete' });
+  }
+});
+
 module.exports = router;

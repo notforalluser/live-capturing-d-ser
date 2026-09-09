@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
 
-// One document per employee laptop. Auto-created the first time that
-// device's agent talks to the server.
+// One document per employee laptop.
 const deviceSchema = new mongoose.Schema({
   deviceId: { type: String, required: true, unique: true },
   employeeName: { type: String, default: null },
@@ -9,11 +8,13 @@ const deviceSchema = new mongoose.Schema({
   lastSeen: { type: Date, default: null },
 }, { timestamps: true });
 
-// One document per stored screenshot. The cron job in cron/cleanup.js
-// deletes documents (and their files) older than RETENTION_DAYS.
+// One document per stored screenshot - the image bytes themselves live
+// directly inside imageData (MongoDB handles this fine for JPEGs well
+// under 1MB each). The cron job in cron/cleanup.js deletes documents
+// older than RETENTION_DAYS, which is what keeps total DB size bounded.
 const screenshotSchema = new mongoose.Schema({
   deviceId: { type: String, required: true, index: true },
-  filePath: { type: String, required: true },
+  imageData: { type: Buffer, required: true },
   capturedAt: { type: Date, required: true, index: true },
 });
 

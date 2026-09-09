@@ -11,6 +11,7 @@ const { scheduleCleanup } = require('./cron/cleanup');
 
 const screenshotRoutes = require('./routes/screenshots');
 const deviceRoutes = require('./routes/devices');
+const screenshotImageRoutes = require('./routes/screenshotImage');
 
 async function main() {
   await initDb();
@@ -23,18 +24,15 @@ async function main() {
   app.use('/api/screenshots', requireApiKey, screenshotRoutes);
   app.use('/api/devices', requireApiKey, deviceRoutes);
 
-  // Serve stored screenshot images (still gated by the key via query param,
-  // since <img> tags can't send custom headers).
-  app.use(
-    '/uploads',
-    (req, res, next) => {
-      if (req.query.apiKey !== process.env.API_KEY) {
-        return res.status(401).send('Unauthorized');
-      }
-      next();
-    },
-    express.static(path.join(__dirname, process.env.UPLOAD_DIR || 'uploads'))
-  );
+  // Separate path (not under /api/screenshots) so it isn't caught by the
+  // header-based requireApiKey above - this route checks the key itself,
+  // via query param, since <img> tags can't send custom headers.
+  app.use('/api/screenshot-image', screenshotImageRoutes);
+
+  // Screenshot images now live in R2/S3, not on local disk - the history
+  // endpoint returns short-lived signed URLs directly, so no static route
+  // is needed here anymore (and nothing here survives a Render restart
+  // anyway, which is exactly the problem this change fixes).
 
   // The dashboard is deployed separately (e.g. on Vercel) and just points
   // at this server's URL - this backend only needs to serve the API,

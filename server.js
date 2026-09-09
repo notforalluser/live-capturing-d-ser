@@ -36,8 +36,12 @@ async function main() {
     express.static(path.join(__dirname, process.env.UPLOAD_DIR || 'uploads'))
   );
 
-  // Serve the dashboard (plain HTML/JS, no build step) from ../dashboard
-  app.use('/', express.static(path.join(__dirname, '..', 'dashboard')));
+  // The dashboard is deployed separately (e.g. on Vercel) and just points
+  // at this server's URL - this backend only needs to serve the API,
+  // uploaded screenshots, and WebRTC signaling.
+  app.get('/', (req, res) => {
+    res.json({ ok: true, message: 'Employee monitor backend is running.' });
+  });
 
   app.get('/health', (req, res) => res.json({ ok: true }));
 

@@ -6,6 +6,9 @@ const deviceSchema = new mongoose.Schema({
   employeeName: { type: String, default: null },
   machineName: { type: String, default: null },
   lastSeen: { type: Date, default: null },
+  liveEnabled: { type: Boolean, default: true },
+  screenshotEnabled: { type: Boolean, default: true },
+  screenshotIntervalSeconds: { type: Number, default: 120 },
 }, { timestamps: true });
 
 // One document per stored screenshot - the image bytes themselves live

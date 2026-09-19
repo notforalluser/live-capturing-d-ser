@@ -5,9 +5,10 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 
-const { initDb } = require('./db');
+const { initDb, Device } = require('./db');
 const { requireApiKey } = require('./auth');
 const { scheduleCleanup } = require('./cron/cleanup');
+const { onlineAgents } = require('./agentRegistry');
 
 const screenshotRoutes = require('./routes/screenshots');
 const deviceRoutes = require('./routes/devices');
@@ -45,6 +46,7 @@ async function main() {
 
   const server = http.createServer(app);
   const io = new Server(server, { cors: { origin: '*' } });
+  app.locals.io = io; // lets routes/devices.js push settings changes to a live agent
 
   // ---- WebRTC signaling (live view only, nothing is stored here) ----
   // Agents join a room named after their deviceId and announce themselves.
@@ -61,14 +63,26 @@ async function main() {
     next();
   });
 
-  const onlineAgents = new Map(); // deviceId -> socket.id
-
   io.on('connection', (socket) => {
-    socket.on('agent:online', ({ deviceId }) => {
+    socket.on('agent:online', async ({ deviceId }) => {
       onlineAgents.set(deviceId, socket.id);
       socket.data.role = 'agent';
       socket.data.deviceId = deviceId;
       io.emit('devices:update', Array.from(onlineAgents.keys()));
+
+      // Send this laptop's current settings immediately - covers the case
+      // where an admin changed them while this agent was offline/restarting.
+      try {
+        let device = await Device.findOne({ deviceId });
+        if (!device) device = await Device.create({ deviceId });
+        socket.emit('settings:update', {
+          liveEnabled: device.liveEnabled,
+          screenshotEnabled: device.screenshotEnabled,
+          screenshotIntervalSeconds: device.screenshotIntervalSeconds,
+        });
+      } catch (err) {
+        console.error('Failed to send initial settings to agent:', err);
+      }
     });
 
     socket.on('viewer:watch', ({ deviceId }) => {

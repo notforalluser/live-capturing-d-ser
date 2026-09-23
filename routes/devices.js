@@ -13,6 +13,19 @@ function shapeDevice(d) {
     live_enabled: d.liveEnabled,
     screenshot_enabled: d.screenshotEnabled,
     screenshot_interval_seconds: d.screenshotIntervalSeconds,
+    camera_enabled: d.cameraEnabled,
+    mic_enabled: d.micEnabled,
+    camera_mic_consent: d.cameraMicConsent,
+  };
+}
+
+function settingsPayload(d) {
+  return {
+    liveEnabled: d.liveEnabled,
+    screenshotEnabled: d.screenshotEnabled,
+    screenshotIntervalSeconds: d.screenshotIntervalSeconds,
+    cameraEnabled: d.cameraEnabled,
+    micEnabled: d.micEnabled,
   };
 }
 
@@ -44,38 +57,34 @@ router.put('/:deviceId', async (req, res) => {
 });
 
 // GET /api/devices/:deviceId/settings -> called by the agent on startup/reconnect
-// to learn its current liveEnabled/screenshotEnabled/interval (creates the
-// device with defaults if this is the very first time it's been seen).
 router.get('/:deviceId/settings', async (req, res) => {
   try {
     let device = await Device.findOne({ deviceId: req.params.deviceId });
     if (!device) {
       device = await Device.create({ deviceId: req.params.deviceId });
     }
-    res.json({
-      liveEnabled: device.liveEnabled,
-      screenshotEnabled: device.screenshotEnabled,
-      screenshotIntervalSeconds: device.screenshotIntervalSeconds,
-    });
+    res.json(settingsPayload(device));
   } catch (err) {
     console.error('Settings fetch error:', err);
     res.status(500).json({ error: 'Failed to fetch settings' });
   }
 });
 
-// PUT /api/devices/:deviceId/settings  { liveEnabled?, screenshotEnabled?, screenshotIntervalSeconds? }
-// Called from the admin dashboard. Pushes the change to that laptop's agent
-// immediately via Socket.io if it's currently online, so toggles/interval
-// changes take effect right away rather than waiting for a poll.
+// PUT /api/devices/:deviceId/settings
+// { liveEnabled?, screenshotEnabled?, screenshotIntervalSeconds?, cameraEnabled?, micEnabled? }
+// Pushes the change to that laptop's agent immediately via Socket.io if
+// it's currently online, so toggles take effect right away.
 router.put('/:deviceId/settings', async (req, res) => {
   try {
-    const { liveEnabled, screenshotEnabled, screenshotIntervalSeconds } = req.body;
+    const { liveEnabled, screenshotEnabled, screenshotIntervalSeconds, cameraEnabled, micEnabled } = req.body;
     const update = {};
     if (typeof liveEnabled === 'boolean') update.liveEnabled = liveEnabled;
     if (typeof screenshotEnabled === 'boolean') update.screenshotEnabled = screenshotEnabled;
     if (typeof screenshotIntervalSeconds === 'number' && screenshotIntervalSeconds >= 5) {
       update.screenshotIntervalSeconds = screenshotIntervalSeconds;
     }
+    if (typeof cameraEnabled === 'boolean') update.cameraEnabled = cameraEnabled;
+    if (typeof micEnabled === 'boolean') update.micEnabled = micEnabled;
 
     const device = await Device.findOneAndUpdate(
       { deviceId: req.params.deviceId },
@@ -86,11 +95,7 @@ router.put('/:deviceId/settings', async (req, res) => {
     const io = req.app.locals.io;
     const socketId = onlineAgents.get(req.params.deviceId);
     if (io && socketId) {
-      io.to(socketId).emit('settings:update', {
-        liveEnabled: device.liveEnabled,
-        screenshotEnabled: device.screenshotEnabled,
-        screenshotIntervalSeconds: device.screenshotIntervalSeconds,
-      });
+      io.to(socketId).emit('settings:update', settingsPayload(device));
     }
 
     res.json({ ok: true, settings: shapeDevice(device) });

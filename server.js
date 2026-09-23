@@ -64,7 +64,7 @@ async function main() {
   });
 
   io.on('connection', (socket) => {
-    socket.on('agent:online', async ({ deviceId }) => {
+    socket.on('agent:online', async ({ deviceId, cameraMicConsent }) => {
       onlineAgents.set(deviceId, socket.id);
       socket.data.role = 'agent';
       socket.data.deviceId = deviceId;
@@ -75,25 +75,33 @@ async function main() {
       try {
         let device = await Device.findOne({ deviceId });
         if (!device) device = await Device.create({ deviceId });
+        if (cameraMicConsent && cameraMicConsent !== device.cameraMicConsent) {
+          device.cameraMicConsent = cameraMicConsent;
+          await device.save();
+        }
         socket.emit('settings:update', {
           liveEnabled: device.liveEnabled,
           screenshotEnabled: device.screenshotEnabled,
           screenshotIntervalSeconds: device.screenshotIntervalSeconds,
+          cameraEnabled: device.cameraEnabled,
+          micEnabled: device.micEnabled,
         });
       } catch (err) {
         console.error('Failed to send initial settings to agent:', err);
       }
     });
 
-    socket.on('viewer:watch', ({ deviceId }) => {
+    // kind: 'screen' (default) or 'camera' - lets the dashboard request
+    // either stream independently, even both at once for the same device.
+    socket.on('viewer:watch', ({ deviceId, kind }) => {
       const agentSocketId = onlineAgents.get(deviceId);
       if (agentSocketId) {
-        io.to(agentSocketId).emit('viewer:request', { viewerId: socket.id });
+        io.to(agentSocketId).emit('viewer:request', { viewerId: socket.id, kind: kind || 'screen' });
       }
     });
 
-    socket.on('signal', ({ to, data, deviceId }) => {
-      io.to(to).emit('signal', { from: socket.id, data, deviceId });
+    socket.on('signal', ({ to, data, deviceId, kind }) => {
+      io.to(to).emit('signal', { from: socket.id, data, deviceId, kind: kind || 'screen' });
     });
 
     socket.on('disconnect', () => {

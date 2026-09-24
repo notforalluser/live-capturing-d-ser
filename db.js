@@ -17,6 +17,20 @@ const deviceSchema = new mongoose.Schema({
   // launch - not something the admin sets, this reflects what the
   // employee actually agreed to on their own machine.
   cameraMicConsent: { type: String, enum: ['pending', 'granted', 'declined'], default: 'pending' },
+  // Admin permission gate for remote mouse/keyboard control - same pattern
+  // as the other toggles, defaults OFF.
+  remoteControlEnabled: { type: Boolean, default: false },
+  // What the MANAGER dashboard is allowed to show for this employee - set
+  // only by the Super Admin. Separate from the functional toggles above:
+  // e.g. camera can be enabled (cameraEnabled: true) but still hidden from
+  // managers (managerVisibility.camera: false) until explicitly granted.
+  managerVisibility: {
+    live: { type: Boolean, default: true },
+    screenshot: { type: Boolean, default: true },
+    camera: { type: Boolean, default: false },
+    mic: { type: Boolean, default: false },
+    remoteControl: { type: Boolean, default: false },
+  },
 }, { timestamps: true });
 
 // One document per stored screenshot - the image bytes themselves live

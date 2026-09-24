@@ -64,6 +64,18 @@ async function main() {
   });
 
   io.on('connection', (socket) => {
+    // ---- Dashboard viewer presence ----
+    // A dashboard socket calls this right after unlocking with a valid
+    // password, identifying its role/name so everyone can see who's
+    // currently watching. Agents never emit this, so they're naturally
+    // excluded from the count.
+    socket.on('viewer:identify', ({ role, name }) => {
+      socket.data.role = 'viewer';
+      socket.data.viewerName = name;
+      socket.data.viewerRole = role;
+      broadcastViewers();
+    });
+
     socket.on('agent:online', async ({ deviceId, cameraMicConsent }) => {
       onlineAgents.set(deviceId, socket.id);
       socket.data.role = 'agent';
@@ -85,6 +97,7 @@ async function main() {
           screenshotIntervalSeconds: device.screenshotIntervalSeconds,
           cameraEnabled: device.cameraEnabled,
           micEnabled: device.micEnabled,
+          remoteControlEnabled: device.remoteControlEnabled,
         });
       } catch (err) {
         console.error('Failed to send initial settings to agent:', err);
@@ -104,15 +117,52 @@ async function main() {
       io.to(to).emit('signal', { from: socket.id, data, deviceId, kind: kind || 'screen' });
     });
 
+    // ---- Remote control relay (mouse/keyboard) ----
+    // The agent enforces remoteControlEnabled itself before acting on any
+    // of these - this server just passes messages between admin and agent.
+    socket.on('remote:start', ({ deviceId }) => {
+      const agentSocketId = onlineAgents.get(deviceId);
+      if (agentSocketId) io.to(agentSocketId).emit('remote:start', { viewerId: socket.id });
+    });
+
+    socket.on('remote:stop', ({ deviceId }) => {
+      const agentSocketId = onlineAgents.get(deviceId);
+      if (agentSocketId) io.to(agentSocketId).emit('remote:stop', {});
+    });
+
+    socket.on('remote:input', ({ deviceId, input }) => {
+      const agentSocketId = onlineAgents.get(deviceId);
+      if (agentSocketId) io.to(agentSocketId).emit('remote:input', input);
+    });
+
+    // Agent reports its real screen size back to the requesting viewer,
+    // so the dashboard can translate click coordinates correctly.
+    socket.on('remote:screen-info', ({ to, deviceId, width, height }) => {
+      io.to(to).emit('remote:screen-info', { deviceId, width, height });
+    });
+
     socket.on('disconnect', () => {
       if (socket.data.role === 'agent' && socket.data.deviceId) {
         onlineAgents.delete(socket.data.deviceId);
         io.emit('devices:update', Array.from(onlineAgents.keys()));
       }
+      if (socket.data.role === 'viewer') {
+        broadcastViewers();
+      }
     });
 
     socket.emit('devices:update', Array.from(onlineAgents.keys()));
   });
+
+  function broadcastViewers() {
+    const viewers = [];
+    for (const [, s] of io.of('/').sockets) {
+      if (s.data.role === 'viewer') {
+        viewers.push({ name: s.data.viewerName, role: s.data.viewerRole });
+      }
+    }
+    io.emit('viewers:update', viewers);
+  }
 
   scheduleCleanup();
 

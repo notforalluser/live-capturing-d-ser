@@ -20,10 +20,13 @@ const deviceSchema = new mongoose.Schema({
   // Admin permission gate for remote mouse/keyboard control - same pattern
   // as the other toggles, defaults OFF.
   remoteControlEnabled: { type: Boolean, default: false },
-  // What the MANAGER dashboard is allowed to show for this employee - set
-  // only by the Super Admin. Separate from the functional toggles above:
-  // e.g. camera can be enabled (cameraEnabled: true) but still hidden from
-  // managers (managerVisibility.camera: false) until explicitly granted.
+  // What the MEMBER dashboard (shared with any trusted person the Super
+  // Admin gives the password to) is allowed to show/control for this
+  // employee. Separate from the functional toggles above: e.g. camera can
+  // be enabled (cameraEnabled: true) but still hidden from members
+  // (managerVisibility.camera: false) until explicitly granted. Once
+  // granted, members get the same functional control as the Super Admin
+  // for that category on that employee (not just viewing).
   managerVisibility: {
     live: { type: Boolean, default: true },
     screenshot: { type: Boolean, default: true },
@@ -43,13 +46,26 @@ const screenshotSchema = new mongoose.Schema({
   capturedAt: { type: Date, required: true, index: true },
 });
 
+// One document per notable action taken from either dashboard - who did
+// what, on which employee, and when. Visible only on the Super Admin
+// dashboard, useful now that access is shared with multiple trusted people.
+const activityLogSchema = new mongoose.Schema({
+  viewerRole: { type: String, required: true }, // 'super_admin' | 'member'
+  viewerName: { type: String, required: true },
+  action: { type: String, required: true }, // e.g. 'viewed_camera', 'started_remote_control'
+  deviceId: { type: String, default: null },
+  deviceLabel: { type: String, default: null },
+  at: { type: Date, default: Date.now },
+});
+
 const Device = mongoose.model('Device', deviceSchema);
 const Screenshot = mongoose.model('Screenshot', screenshotSchema);
+const ActivityLog = mongoose.model('ActivityLog', activityLogSchema);
 
 async function initDb() {
   await mongoose.connect(process.env.MONGODB_URI);
   console.log('MongoDB connected:', process.env.MONGODB_URI);
-  return { Device, Screenshot };
+  return { Device, Screenshot, ActivityLog };
 }
 
-module.exports = { initDb, Device, Screenshot };
+module.exports = { initDb, Device, Screenshot, ActivityLog };

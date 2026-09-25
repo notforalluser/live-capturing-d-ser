@@ -5,7 +5,7 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 
-const { initDb, Device } = require('./db');
+const { initDb, Device, ActivityLog } = require('./db');
 const { requireApiKey } = require('./auth');
 const { scheduleCleanup } = require('./cron/cleanup');
 const { onlineAgents } = require('./agentRegistry');
@@ -44,6 +44,19 @@ async function main() {
 
   app.get('/health', (req, res) => res.json({ ok: true }));
 
+  // Recent activity across both dashboards - only admin-app.js has UI for
+  // this, but the endpoint itself just uses the same shared API key as
+  // everything else in this app.
+  app.get('/api/activity-log', requireApiKey, async (req, res) => {
+    try {
+      const logs = await ActivityLog.find({}).sort({ at: -1 }).limit(100).lean();
+      res.json(logs);
+    } catch (err) {
+      console.error('Activity log fetch error:', err);
+      res.status(500).json({ error: 'Failed to fetch activity log' });
+    }
+  });
+
   const server = http.createServer(app);
   const io = new Server(server, { cors: { origin: '*' } });
   app.locals.io = io; // lets routes/devices.js push settings changes to a live agent
@@ -66,14 +79,49 @@ async function main() {
   io.on('connection', (socket) => {
     // ---- Dashboard viewer presence ----
     // A dashboard socket calls this right after unlocking with a valid
-    // password, identifying its role/name so everyone can see who's
-    // currently watching. Agents never emit this, so they're naturally
-    // excluded from the count.
-    socket.on('viewer:identify', ({ role, name }) => {
+    // password, identifying its role/name. Members are NEVER told about
+    // the admin's presence - broadcastViewers() below filters that out
+    // entirely, not just by omitting a label.
+    socket.on('viewer:identify', ({ role, clientTag }) => {
       socket.data.role = 'viewer';
-      socket.data.viewerName = name;
-      socket.data.viewerRole = role;
+      socket.data.viewerRole = role; // 'super_admin' | 'member'
+
+      if (role === 'super_admin') {
+        socket.data.viewerName = 'Super Admin';
+      } else {
+        // No name entry for members - identify automatically by public IP
+        // (behind Render's proxy, the real client IP is in x-forwarded-for)
+        // plus a short per-browser tag so two people behind the same
+        // office NAT still show up as distinct entries.
+        const forwarded = socket.handshake.headers['x-forwarded-for'];
+        const ip = forwarded ? forwarded.split(',')[0].trim() : socket.handshake.address;
+        socket.data.viewerName = clientTag ? `Member-${clientTag} (${ip})` : `Member (${ip})`;
+      }
+
       broadcastViewers();
+    });
+
+    // Any dashboard action worth a record - toggles, camera/mic views,
+    // remote control sessions. Stored for the admin's Activity Log.
+    socket.on('activity:log', async ({ action, deviceId, deviceLabel }) => {
+      if (socket.data.role !== 'viewer') return;
+      try {
+        const entry = await ActivityLog.create({
+          viewerRole: socket.data.viewerRole,
+          viewerName: socket.data.viewerName,
+          action,
+          deviceId: deviceId || null,
+          deviceLabel: deviceLabel || null,
+        });
+        // Push live to admin sockets only.
+        for (const [, s] of io.of('/').sockets) {
+          if (s.data.role === 'viewer' && s.data.viewerRole === 'super_admin') {
+            s.emit('activity:new', entry);
+          }
+        }
+      } catch (err) {
+        console.error('Activity log write failed:', err);
+      }
     });
 
     socket.on('agent:online', async ({ deviceId, cameraMicConsent }) => {
@@ -155,13 +203,20 @@ async function main() {
   });
 
   function broadcastViewers() {
-    const viewers = [];
+    const memberViewers = [];
     for (const [, s] of io.of('/').sockets) {
-      if (s.data.role === 'viewer') {
-        viewers.push({ name: s.data.viewerName, role: s.data.viewerRole });
+      if (s.data.role === 'viewer' && s.data.viewerRole !== 'super_admin') {
+        memberViewers.push({ name: s.data.viewerName, role: s.data.viewerRole });
       }
     }
-    io.emit('viewers:update', viewers);
+    // Everyone (admin included) only ever sees the member list - the admin's
+    // own presence is never broadcast to anyone, including other admins,
+    // since there's only ever one admin password anyway.
+    for (const [, s] of io.of('/').sockets) {
+      if (s.data.role === 'viewer') {
+        s.emit('viewers:update', memberViewers);
+      }
+    }
   }
 
   scheduleCleanup();

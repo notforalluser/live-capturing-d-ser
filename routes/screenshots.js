@@ -34,23 +34,78 @@ router.post('/', upload.single('image'), async (req, res) => {
   }
 });
 
-// GET /api/screenshots/:deviceId?limit=50 -> metadata only (no image bytes -
-// keeps this response small and fast; the dashboard fetches each image
-// separately via /api/screenshot-image/:id)
+// GET /api/screenshots/:deviceId?limit=50&forTeam=true
+// forTeam=true (used only by member-app.js) filters out anything the admin
+// has hidden from the team. Omitted (admin-app.js) returns everything,
+// hidden or not, along with the hidden_from_team flag so the admin UI can
+// show its indicator.
 router.get('/:deviceId', async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const rows = await Screenshot.find({ deviceId: req.params.deviceId })
-      .select('_id capturedAt')
+    // limit=all (used by the gallery view, which groups everything by date)
+    // fetches everything up to a generous safety ceiling. A plain number
+    // still works as before for anything that wants a small page.
+    const HARD_CEILING = 5000;
+    const limit = req.query.limit === 'all'
+      ? HARD_CEILING
+      : Math.min(Number(req.query.limit) || 50, HARD_CEILING);
+    const query = { deviceId: req.params.deviceId };
+    if (req.query.forTeam === 'true') {
+      query.hiddenFromTeam = { $ne: true };
+    }
+
+    const rows = await Screenshot.find(query)
+      .select('_id capturedAt hiddenFromTeam')
       .sort({ capturedAt: -1 })
       .limit(limit)
       .lean();
 
-    const shaped = rows.map((r) => ({ id: r._id, captured_at: r.capturedAt }));
+    const shaped = rows.map((r) => ({
+      id: r._id,
+      captured_at: r.capturedAt,
+      hidden_from_team: !!r.hiddenFromTeam,
+    }));
     res.json(shaped);
   } catch (err) {
     console.error('History fetch error:', err);
     res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
+
+// PUT /api/screenshots/:id/visibility  { hidden: true|false }
+// Admin-only usage (only admin-app.js has UI for this) - toggles whether
+// one specific image is visible on the team dashboard.
+router.put('/:id/visibility', async (req, res) => {
+  try {
+    const { hidden } = req.body;
+    if (typeof hidden !== 'boolean') {
+      return res.status(400).json({ error: 'hidden (boolean) is required' });
+    }
+    const updated = await Screenshot.findByIdAndUpdate(
+      req.params.id,
+      { hiddenFromTeam: hidden },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true, hidden_from_team: updated.hiddenFromTeam });
+  } catch (err) {
+    console.error('Visibility update error:', err);
+    res.status(500).json({ error: 'Failed to update visibility' });
+  }
+});
+
+// POST /api/screenshots/hide-many  { ids: [...], hidden: true|false }
+// Bulk version for the admin dashboard's multi-select actions.
+router.post('/hide-many', async (req, res) => {
+  try {
+    const { ids, hidden } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0 || typeof hidden !== 'boolean') {
+      return res.status(400).json({ error: 'ids array and hidden (boolean) are required' });
+    }
+    const result = await Screenshot.updateMany({ _id: { $in: ids } }, { hiddenFromTeam: hidden });
+    res.json({ ok: true, modifiedCount: result.modifiedCount });
+  } catch (err) {
+    console.error('Bulk visibility update error:', err);
+    res.status(500).json({ error: 'Failed to update visibility' });
   }
 });
 

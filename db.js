@@ -44,6 +44,10 @@ const screenshotSchema = new mongoose.Schema({
   deviceId: { type: String, required: true, index: true },
   imageData: { type: Buffer, required: true },
   capturedAt: { type: Date, required: true, index: true },
+  // Per-image override, admin-only - default visible to the team. Hiding
+  // one image never affects any other, and never affects the functional
+  // screenshot_enabled toggle.
+  hiddenFromTeam: { type: Boolean, default: false },
 });
 
 // One document per notable action taken from either dashboard - who did
